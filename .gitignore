@@ -1,0 +1,10 @@
+# 编译产物
+AppDim.app/
+dist/*.zip
+
+# 图标编译产物
+icon/make_icon
+
+# macOS
+.DS_Store
+__MACOSX/
