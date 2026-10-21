@@ -3,7 +3,7 @@
 一个免费、本地运行、无需账号、无需付费的 macOS 菜单栏工具：在状态栏里勾选任意正在运行的 App，
 给它的窗口盖一层可调透明度的半透明黑罩，夜间护眼。替代 2022 年停更、遮挡后容易丢遮罩的 AppDimmer。
 
-![icon](icon/AppDim.iconset/icon_512x512@2x.png)
+<img src="icon/AppDim.iconset/icon_512x512@2x.png" width="64" height="64" alt="icon">
 
 ## 下载安装
 
