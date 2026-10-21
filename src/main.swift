@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 import ServiceManagement
 
 // MARK: - 持久化键
@@ -6,7 +7,18 @@ enum Keys {
     static let masterOn = "appdim.masterOn"
     static let dimLevel = "appdim.dimLevel"
     static let enabled = "appdim.enabledBundles"
+    static let hkKeyCode = "appdim.hkKeyCode"
+    static let hkModifiers = "appdim.hkModifiers"
 }
+
+// Carbon 修饰键常量
+private let kCmd: UInt32 = 256      // cmdKey
+private let kShift: UInt32 = 512    // shiftKey
+private let kOpt: UInt32 = 2048     // optionKey
+private let kCtrl: UInt32 = 4096   // controlKey
+// 默认 ⇧⌘D（keyCode 2 = ANSI D）
+private let defaultKeyCode: UInt32 = 2
+private let defaultModifiers: UInt32 = kCmd | kShift
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -37,8 +49,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         set { UserDefaults.standard.set(Array(newValue), forKey: Keys.enabled) }
     }
 
+    // MARK: - 全局快捷键
+    var hotKeyRef: EventHotKeyRef?
+    var hotKeyHandler: EventHandlerRef?
+    var recordMonitor: Any?
+    var recording = false
+
+    var hkKeyCode: UInt32 {
+        get { UInt32(UserDefaults.standard.integer(forKey: Keys.hkKeyCode)) }
+        set { UserDefaults.standard.set(Int(newValue), forKey: Keys.hkKeyCode) }
+    }
+    var hkModifiers: UInt32 {
+        get {
+            let v = UInt32(UserDefaults.standard.integer(forKey: Keys.hkModifiers))
+            return v == 0 ? defaultModifiers : v
+        }
+        set { UserDefaults.standard.set(Int(newValue), forKey: Keys.hkModifiers) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
+        Self.hotkeyTriggered = { [weak self] in
+            self?.toggleMaster(nil)
+        }
+        installHotkeyHandler()
+        registerHotkey()
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             self?.update()
         }
@@ -141,6 +176,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(label)
         menu.addItem(.separator())
 
+        // 全局快捷键（默认 ⇧⌘D，可录制自定义）
+        let hkHeader = NSMenuItem(title: "全局快捷键（开关变暗总览）", action: nil, keyEquivalent: "")
+        hkHeader.isEnabled = false
+        menu.addItem(hkHeader)
+
+        let rec = NSMenuItem(
+            title: recording ? "请按下新的组合键…（Esc 取消）" : "录制快捷键：\(hotkeyDisplay())",
+            action: #selector(recordHotkey(_:)),
+            keyEquivalent: ""
+        )
+        rec.target = self
+        menu.addItem(rec)
+
+        let reset = NSMenuItem(
+            title: "恢复默认 ⇧⌘D",
+            action: #selector(resetHotkey(_:)),
+            keyEquivalent: ""
+        )
+        reset.target = self
+        menu.addItem(reset)
+        menu.addItem(.separator())
+
         // 开机自启
         let login = NSMenuItem(
             title: "开机自动启动",
@@ -162,10 +219,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 动作
-    @objc private func toggleMaster(_ sender: NSMenuItem) {
+    @objc private func toggleMaster(_ sender: NSMenuItem?) {
         masterOn = !masterOn
-        sender.state = masterOn ? .on : .off
+        if let s = sender { s.state = masterOn ? .on : .off }
+        // 同步菜单里的总开关勾选态
+        if let menu = statusItem.menu {
+            for item in menu.items where item.title == "启用窗口变暗" {
+                item.state = masterOn ? .on : .off
+            }
+        }
         update()
+    }
+
+    // MARK: - 全局快捷键（Carbon RegisterEventHotKey，无需辅助功能权限）
+    private func installHotkeyHandler() {
+        let spec = [EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )]
+        InstallEventHandler(
+            nil,
+            { _, _, _ in
+                AppDelegate.hotkeyTriggered?()
+                return noErr
+            },
+            spec.count, spec, nil, &hotKeyHandler
+        )
+    }
+
+    static var hotkeyTriggered: (() -> Void)?
+
+    private func registerHotkey() {
+        if let r = hotKeyRef {
+            UnregisterEventHotKey(r)
+            hotKeyRef = nil
+        }
+        let hid = EventHotKeyID(signature: OSType(0x4144494D), id: 1) // 'ADIM'
+        RegisterEventHotKey(
+            hkKeyCode == 0 ? defaultKeyCode : hkKeyCode,
+            hkModifiers,
+            hid,
+            nil,
+            0,
+            &hotKeyRef
+        )
+    }
+
+    // MARK: - 快捷键录制
+    @objc private func recordHotkey(_ sender: NSMenuItem) {
+        recording = true
+        NSApp.activate(ignoringOtherApps: true)
+        recordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 { // Esc 取消
+                self.finishRecording()
+                return nil
+            }
+            let flags = event.modifierFlags
+            var carbon: UInt32 = 0
+            if flags.contains(.control) { carbon |= kCtrl }
+            if flags.contains(.option) { carbon |= kOpt }
+            if flags.contains(.shift) { carbon |= kShift }
+            if flags.contains(.command) { carbon |= kCmd }
+            // 至少带一个修饰键，避免和普通打字冲突
+            guard carbon != 0 else { return nil }
+            self.hkKeyCode = UInt32(event.keyCode)
+            self.hkModifiers = carbon
+            self.finishRecording()
+            return nil
+        }
+        sender.title = "⌨️ 请按下新的组合键…（Esc 取消）"
+    }
+
+    @objc private func resetHotkey(_ sender: NSMenuItem) {
+        hkKeyCode = defaultKeyCode
+        hkModifiers = defaultModifiers
+        finishRecording()
+    }
+
+    private func finishRecording() {
+        recording = false
+        if let m = recordMonitor { NSEvent.removeMonitor(m) }
+        recordMonitor = nil
+        registerHotkey()
+        rebuildMenu()
+    }
+
+    /// 把当前快捷键格式化成菜单显示文本
+    private func hotkeyDisplay() -> String {
+        var parts: [String] = []
+        if hkModifiers & kCtrl != 0 { parts.append("⌃") }
+        if hkModifiers & kOpt != 0 { parts.append("⌥") }
+        if hkModifiers & kShift != 0 { parts.append("⇧") }
+        if hkModifiers & kCmd != 0 { parts.append("⌘") }
+        parts.append(Self.keyLabel(hkKeyCode == 0 ? defaultKeyCode : hkKeyCode))
+        return parts.joined()
+    }
+
+    private static func keyLabel(_ code: UInt32) -> String {
+        let map: [UInt32: String] = [
+            0:"A",1:"S",2:"D",3:"F",4:"H",5:"G",6:"Z",7:"X",8:"C",9:"V",10:"B",
+            11:"Q",12:"W",13:"E",14:"R",15:"T",16:"Y",32:"U",34:"I",35:"O",36:"P",
+            37:"L",38:"J",40:"K",45:"N",46:"M",
+            18:"1",19:"2",20:"3",21:"4",22:"5",23:"6",24:"7",25:"8",26:"9",29:"0"
+        ]
+        return map[code] ?? "键\(code)"
     }
 
     @objc private func toggleApp(_ sender: NSMenuItem) {

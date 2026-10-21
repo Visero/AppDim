@@ -10,7 +10,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 echo "== 编译 =="
-swiftc -O -o "$APP/Contents/MacOS/AppDim" "$SRC" -framework Cocoa -framework ServiceManagement
+swiftc -O -o "$APP/Contents/MacOS/AppDim" "$SRC" -framework Cocoa -framework Carbon -framework ServiceManagement
 
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 
