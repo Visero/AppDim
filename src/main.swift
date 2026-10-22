@@ -11,6 +11,7 @@ enum Keys {
     static let hkModifiers = "appdim.hkModifiers"
     static let refreshInterval = "appdim.refreshInterval"
     static let cornerRadius = "appdim.cornerRadius"
+    static let dimByBundle = "appdim.dimByBundle"
 }
 
 // Carbon 修饰键常量
@@ -45,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var timer: Timer?
     // bundleID -> 遮罩窗口
     var overlays: [String: NSWindow] = [:]
+    // 每个 App 暗度滑杆 -> bundleID 的临时映射
+    var sliderOwner: [ObjectIdentifier: String] = [:]
 
     var masterOn: Bool {
         get { UserDefaults.standard.object(forKey: Keys.masterOn) as? Bool ?? true }
@@ -75,6 +78,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return v >= 0 ? CGFloat(v) : 10
         }
         set { UserDefaults.standard.set(Double(newValue), forKey: Keys.cornerRadius) }
+    }
+
+    /// 每个 App 单独的暗度（bundleID -> 0.01~0.99），未设置则用全局 dimLevel
+    var dimByBundle: [String: CGFloat] {
+        get {
+            guard let d = UserDefaults.standard.dictionary(forKey: Keys.dimByBundle) as? [String: Double] else { return [:] }
+            return d.mapValues { CGFloat($0) }
+        }
+        set { UserDefaults.standard.set(newValue.mapValues { Double($0) }, forKey: Keys.dimByBundle) }
+    }
+
+    /// 取某 App 的有效暗度：自定义优先，否则全局默认
+    func effectiveDim(_ bid: String) -> CGFloat {
+        dimByBundle[bid] ?? dimLevel
     }
 
     /// 已勾选变暗的 App（bundleID 集合），持久化
@@ -199,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
             item.representedObject = bid
             item.state = enabledBundles.contains(bid) ? .on : .off
+            item.submenu = perAppDimMenu(bid: bid)
             menu.addItem(item)
         }
 
@@ -434,12 +452,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let v = min(99.0, max(1.0, sender.doubleValue))
         dimLevel = CGFloat(v / 100.0)
         sender.doubleValue = v
-        for w in overlays.values { w.alphaValue = dimLevel }
+        for (bid, w) in overlays { w.alphaValue = effectiveDim(bid) }
         if let menu = statusItem.menu {
             for item in menu.items where item.title.hasPrefix("暗度 ") {
                 item.title = "暗度 \(Int(v.rounded()))%（1%–99%）"
             }
         }
+    }
+
+    /// 单个 App 的暗度子菜单：滑杆 + 当前值 + 恢复默认
+    private func perAppDimMenu(bid: String) -> NSMenu {
+        let sub = NSMenu()
+        let s = NSSlider(frame: NSRect(x: 14, y: 6, width: 212, height: 18))
+        s.minValue = 1
+        s.maxValue = 99
+        s.doubleValue = Double((effectiveDim(bid) * 100).rounded())
+        s.target = self
+        s.action = #selector(perAppDimChanged(_:))
+        sliderOwner[ObjectIdentifier(s)] = bid
+        s.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 30))
+        wrap.addSubview(s)
+        let sliderItem = NSMenuItem()
+        sliderItem.view = wrap
+        sub.addItem(sliderItem)
+
+        let custom = dimByBundle[bid] != nil
+        let label = NSMenuItem(
+            title: "当前 \(Int((effectiveDim(bid) * 100).rounded()))%\(custom ? "" : "（跟随全局默认）")",
+            action: nil,
+            keyEquivalent: ""
+        )
+        label.isEnabled = false
+        sub.addItem(label)
+
+        let reset = NSMenuItem(title: "恢复跟随全局默认", action: #selector(resetAppDim(_:)), keyEquivalent: "")
+        reset.target = self
+        reset.representedObject = bid
+        sub.addItem(reset)
+        return sub
+    }
+
+    @objc private func perAppDimChanged(_ sender: NSSlider) {
+        let v = min(99.0, max(1.0, sender.doubleValue))
+        sender.doubleValue = v
+        guard let bid = sliderOwner[ObjectIdentifier(sender)] else { return }
+        var d = dimByBundle
+        d[bid] = CGFloat(v / 100.0)
+        dimByBundle = d
+        if let w = overlays[bid] { w.alphaValue = effectiveDim(bid) }
+    }
+
+    @objc private func resetAppDim(_ sender: NSMenuItem) {
+        guard let bid = sender.representedObject as? String else { return }
+        var d = dimByBundle
+        d.removeValue(forKey: bid)
+        dimByBundle = d
+        if let w = overlays[bid] { w.alphaValue = effectiveDim(bid) }
+        rebuildMenu()
     }
 
     @objc private func selectRefresh(_ sender: NSMenuItem) {
@@ -531,7 +601,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let mask = overlay.contentView as? RoundedMaskView {
                 mask.cornerRadius = coversDisplay ? 0 : cornerRadius
             }
-            overlay.alphaValue = dimLevel
+            overlay.alphaValue = effectiveDim(bid)
             // 插到目标窗口正上方；原本就在上面的窗口保持在上，不被遮罩盖住
             overlay.order(.above, relativeTo: Int(info.windowID))
             if !overlay.isVisible {
