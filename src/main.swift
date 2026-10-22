@@ -20,6 +20,24 @@ private let kCtrl: UInt32 = 4096   // controlKey
 private let defaultKeyCode: UInt32 = 2
 private let defaultModifiers: UInt32 = kCmd | kShift
 
+// 圆角遮罩视图：只在圆角矩形内填黑，矩形四角保持透明，贴合目标窗口圆角
+final class RoundedMaskView: NSView {
+    var cornerRadius: CGFloat = 10 {
+        didSet { needsDisplay = true }
+    }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        let r = min(cornerRadius, bounds.width / 4, bounds.height / 4)
+        let path = NSBezierPath(roundedRect: bounds, xRadius: r, yRadius: r)
+        NSColor.black.setFill()
+        path.fill()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
@@ -89,7 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        w.backgroundColor = .black
+        w.backgroundColor = .clear
+        let mask = RoundedMaskView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        mask.autoresizingMask = [.width, .height]
+        w.contentView = mask
         w.isOpaque = false
         w.ignoresMouseEvents = true          // 点击穿透，不拦截操作
         w.level = .normal
@@ -407,6 +428,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 四周留 1px 余量，避免边缘露出一条未变暗的边
             let pad: CGFloat = 1
             overlay.setFrame(cocoa.insetBy(dx: -pad, dy: -pad), display: true)
+            // 铺满整屏（全屏/最大化）时用直角，否则用 macOS 标准 10pt 圆角贴合窗口
+            let disp = CGDisplayBounds(CGMainDisplayID())
+            let coversDisplay = cocoa.width >= disp.width - 4 && cocoa.height >= disp.height - 4
+            if let mask = overlay.contentView as? RoundedMaskView {
+                mask.cornerRadius = coversDisplay ? 0 : 10
+            }
             overlay.alphaValue = dimLevel
             // 插到目标窗口正上方；原本就在上面的窗口保持在上，不被遮罩盖住
             overlay.order(.above, relativeTo: Int(info.windowID))

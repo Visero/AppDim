@@ -7,7 +7,7 @@
 
 ## 下载安装
 
-**[👉 下载 AppDim-1.1.1.zip](https://github.com/Visero/AppDim/releases/download/v1.1.1/AppDim-1.1.1.zip)**
+**[👉 下载 AppDim-1.1.2.zip](https://github.com/Visero/AppDim/releases/download/v1.1.2/AppDim-1.1.2.zip)**
 
 历史版本见 [Releases](https://github.com/Visero/AppDim/releases)。
 
@@ -23,6 +23,7 @@
 - **常驻变暗**：勾选的 App 一直变暗，不依赖它是不是前台窗口。
 - **不盖上层窗口**：遮罩只垫在目标窗口正下方，别的窗口叠上来时保持正常亮度。
 - **跟随窗口**：拖动、缩放目标窗口，遮罩实时跟随。
+- **圆角贴合**：遮罩采用 macOS 标准 10pt 圆角，与目标窗口圆角对齐；铺满整屏（全屏/最大化）时自动切直角。
 - **点击穿透**：遮罩不拦截鼠标，正常点选、输入、滚动。
 - **暗度可调**：1%–99% 滑杆，实时生效。
 - **全局快捷键**：默认 `⇧⌘D` 一键开关变暗总览，菜单里点「录制快捷键」可改成任意组合键，Esc 取消，可一键恢复默认。
