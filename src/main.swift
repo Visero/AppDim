@@ -10,6 +10,7 @@ enum Keys {
     static let hkKeyCode = "appdim.hkKeyCode"
     static let hkModifiers = "appdim.hkModifiers"
     static let refreshInterval = "appdim.refreshInterval"
+    static let cornerRadius = "appdim.cornerRadius"
 }
 
 // Carbon 修饰键常量
@@ -65,6 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return v > 0 ? v : 0.15
         }
         set { UserDefaults.standard.set(newValue, forKey: Keys.refreshInterval) }
+    }
+
+    /// 遮罩圆角半径（pt），默认 10；0 为直角，可在菜单滑杆调节
+    var cornerRadius: CGFloat {
+        get {
+            let v = UserDefaults.standard.double(forKey: Keys.cornerRadius)
+            return v >= 0 ? CGFloat(v) : 10
+        }
+        set { UserDefaults.standard.set(Double(newValue), forKey: Keys.cornerRadius) }
     }
 
     /// 已勾选变暗的 App（bundleID 集合），持久化
@@ -236,6 +246,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refreshParent.submenu = refreshSub
         menu.addItem(refreshParent)
+        menu.addItem(.separator())
+
+        // 圆角半径滑杆：0 直角，最大 20pt，默认 10
+        let cornerSlider = NSSlider(frame: NSRect(x: 14, y: 6, width: 212, height: 18))
+        cornerSlider.minValue = 0
+        cornerSlider.maxValue = 20
+        cornerSlider.doubleValue = Double(cornerRadius)
+        cornerSlider.target = self
+        cornerSlider.action = #selector(cornerChanged(_:))
+        cornerSlider.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        let cornerWrap = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 30))
+        cornerWrap.addSubview(cornerSlider)
+        let cornerSliderItem = NSMenuItem()
+        cornerSliderItem.view = cornerWrap
+        menu.addItem(cornerSliderItem)
+
+        let cornerLabel = NSMenuItem(
+            title: "圆角 \(Int(cornerRadius.rounded()))pt（0–20，默认 10）",
+            action: nil,
+            keyEquivalent: ""
+        )
+        cornerLabel.isEnabled = false
+        menu.addItem(cornerLabel)
         menu.addItem(.separator())
 
         // 全局快捷键（默认 ⇧⌘D，可录制自定义）
@@ -416,6 +449,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc private func cornerChanged(_ sender: NSSlider) {
+        let v = min(20.0, max(0.0, sender.doubleValue))
+        cornerRadius = CGFloat(v)
+        sender.doubleValue = v
+        for (_, w) in overlays {
+            if let mask = w.contentView as? RoundedMaskView {
+                // 全屏铺满时仍强制直角
+                let disp = CGDisplayBounds(CGMainDisplayID())
+                let r: CGFloat = (w.frame.width >= disp.width - 4 && w.frame.height >= disp.height - 4) ? 0 : cornerRadius
+                mask.cornerRadius = r
+            }
+        }
+        if let menu = statusItem.menu {
+            for item in menu.items where item.title.hasPrefix("圆角 ") {
+                item.title = "圆角 \(Int(v.rounded()))pt（0–20，默认 10）"
+            }
+        }
+    }
+
     @objc private func toggleLogin(_ sender: NSMenuItem) {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -477,7 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let disp = CGDisplayBounds(CGMainDisplayID())
             let coversDisplay = cocoa.width >= disp.width - 4 && cocoa.height >= disp.height - 4
             if let mask = overlay.contentView as? RoundedMaskView {
-                mask.cornerRadius = coversDisplay ? 0 : 10
+                mask.cornerRadius = coversDisplay ? 0 : cornerRadius
             }
             overlay.alphaValue = dimLevel
             // 插到目标窗口正上方；原本就在上面的窗口保持在上，不被遮罩盖住
