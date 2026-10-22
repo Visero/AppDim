@@ -156,19 +156,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // 暗度滑杆
-        let slider = NSSlider(frame: NSRect(x: 14, y: 0, width: 190, height: 24))
-        slider.minValue = 15
-        slider.maxValue = 60
-        slider.doubleValue = Double(dimLevel * 100)
+        // 暗度滑杆：包一层容器，保证水平居中、不歪斜；范围 1%–99%
+        let slider = NSSlider(frame: NSRect(x: 14, y: 6, width: 212, height: 18))
+        slider.minValue = 1
+        slider.maxValue = 99
+        slider.doubleValue = Double((dimLevel * 100).rounded())
         slider.target = self
         slider.action = #selector(dimChanged(_:))
+        slider.autoresizingMask = [.width, .minYMargin, .maxYMargin]
+        let sliderWrap = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 30))
+        sliderWrap.addSubview(slider)
         let sliderItem = NSMenuItem()
-        sliderItem.view = slider
+        sliderItem.view = sliderWrap
         menu.addItem(sliderItem)
 
         let label = NSMenuItem(
-            title: "暗度 \(Int((dimLevel * 100).rounded()))%（15%–60%）",
+            title: "暗度 \(Int((dimLevel * 100).rounded()))%（1%–99%）",
             action: nil,
             keyEquivalent: ""
         )
@@ -336,11 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func dimChanged(_ sender: NSSlider) {
-        dimLevel = CGFloat(sender.doubleValue / 100.0)
+        let v = min(99.0, max(1.0, sender.doubleValue))
+        dimLevel = CGFloat(v / 100.0)
+        sender.doubleValue = v
         for w in overlays.values { w.alphaValue = dimLevel }
         if let menu = statusItem.menu {
             for item in menu.items where item.title.hasPrefix("暗度 ") {
-                item.title = "暗度 \(Int((dimLevel * 100).rounded()))%（15%–60%）"
+                item.title = "暗度 \(Int(v.rounded()))%（1%–99%）"
             }
         }
     }
