@@ -9,6 +9,7 @@ enum Keys {
     static let enabled = "appdim.enabledBundles"
     static let hkKeyCode = "appdim.hkKeyCode"
     static let hkModifiers = "appdim.hkModifiers"
+    static let refreshInterval = "appdim.refreshInterval"
 }
 
 // Carbon 修饰键常量
@@ -57,6 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         set { UserDefaults.standard.set(Double(newValue), forKey: Keys.dimLevel) }
     }
 
+    /// 遮罩跟随同步间隔（秒），默认 0.15；值越小跟随越跟手、CPU 略高
+    var refreshInterval: Double {
+        get {
+            let v = UserDefaults.standard.double(forKey: Keys.refreshInterval)
+            return v > 0 ? v : 0.15
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Keys.refreshInterval) }
+    }
+
     /// 已勾选变暗的 App（bundleID 集合），持久化
     var enabledBundles: Set<String> {
         get {
@@ -92,11 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         installHotkeyHandler()
         registerHotkey()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        restartTimer()
+        update()
+    }
+
+    /// 按当前刷新间隔重建跟随定时器
+    private func restartTimer() {
+        timer?.invalidate()
+        let iv = refreshInterval
+        timer = Timer.scheduledTimer(withTimeInterval: iv, repeats: true) { [weak self] _ in
             self?.update()
         }
-        timer?.tolerance = 0.03
-        update()
+        timer?.tolerance = iv * 0.2
     }
 
     // MARK: - 遮罩窗口工厂：普通层级，插到目标窗口正上方
@@ -198,6 +215,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         label.isEnabled = false
         menu.addItem(label)
+        menu.addItem(.separator())
+
+        // 跟随刷新率（同步间隔）子菜单
+        let refreshParent = NSMenuItem(title: "跟随刷新率", action: nil, keyEquivalent: "")
+        let refreshSub = NSMenu()
+        let refreshOptions: [(Double, String)] = [
+            (0.05, "0.05s（20 次/秒，最跟手）"),
+            (0.10, "0.10s（10 次/秒）"),
+            (0.15, "0.15s（默认，7 次/秒）"),
+            (0.25, "0.25s（4 次/秒，省电）"),
+            (0.50, "0.50s（2 次/秒，最省）")
+        ]
+        for (iv, title) in refreshOptions {
+            let it = NSMenuItem(title: title, action: #selector(selectRefresh(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = iv
+            it.state = abs(refreshInterval - iv) < 0.001 ? .on : .off
+            refreshSub.addItem(it)
+        }
+        refreshParent.submenu = refreshSub
+        menu.addItem(refreshParent)
         menu.addItem(.separator())
 
         // 全局快捷键（默认 ⇧⌘D，可录制自定义）
@@ -369,6 +407,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 item.title = "暗度 \(Int(v.rounded()))%（1%–99%）"
             }
         }
+    }
+
+    @objc private func selectRefresh(_ sender: NSMenuItem) {
+        guard let iv = sender.representedObject as? Double else { return }
+        refreshInterval = iv
+        restartTimer()
+        rebuildMenu()
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
