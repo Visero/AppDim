@@ -7,7 +7,7 @@
 
 ## 下载安装
 
-**[👉 下载 AppDim-1.1.5.zip](https://github.com/Visero/AppDim/releases/download/v1.1.5/AppDim-1.1.5.zip)**
+**[👉 下载 AppDim-1.1.6.zip](https://github.com/Visero/AppDim/releases/download/v1.1.6/AppDim-1.1.6.zip)**
 
 历史版本见 [Releases](https://github.com/Visero/AppDim/releases)。
 

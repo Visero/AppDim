@@ -125,7 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
         Self.hotkeyTriggered = { [weak self] in
-            self?.toggleMaster(nil)
+            DispatchQueue.main.async {
+                self?.hkLog("hotkey fired -> toggle")
+                self?.toggleMaster(nil)
+            }
         }
         installHotkeyHandler()
         registerHotkey()
@@ -167,17 +170,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 菜单栏
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "circle.lefthalf.filled",
-                accessibilityDescription: "AppDim"
-            )
-            button.image?.isTemplate = true
-        }
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        statusItem.menu = NSMenu()
+        statusItem.menu?.delegate = self
+        updateStatusIcon()
         rebuildMenu()
+    }
+
+    /// 总开/关对应的两个菜单栏图标（模板图，自动适配浅色/深色菜单栏）
+    private func updateStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let primary = masterOn ? "rectangle.lefthalf.filled" : "rectangle"
+        let fallback = masterOn ? "circle.lefthalf.filled" : "circle"
+        let img = NSImage(systemSymbolName: primary, accessibilityDescription: "AppDim")
+            ?? NSImage(systemSymbolName: fallback, accessibilityDescription: "AppDim")
+        img?.isTemplate = true
+        button.image = img
+        button.toolTip = masterOn ? "AppDim：窗口变暗已启用" : "AppDim：窗口变暗已关闭"
     }
 
     /// 每次打开菜单时重建，刷新正在运行的 App 列表与勾选态
@@ -344,20 +352,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         update()
     }
 
-    // MARK: - 全局快捷键（Carbon RegisterEventHotKey，无需辅助功能权限）
+    // MARK: - 全局快捷键（Carbon RegisterEventHotKey，无需辅助功能/输入监控权限）
+    private func hkLog(_ s: String) {
+        let line = "\(Date()): \(s)\n"
+        if let fh = fopen("/tmp/appdim-hotkey.log", "a") {
+            fputs(line, fh); fclose(fh)
+        }
+    }
+
     private func installHotkeyHandler() {
         let spec = [EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )]
-        InstallEventHandler(
-            nil,
+        let target = GetEventDispatcherTarget()
+        var handler: EventHandlerRef?
+        let status = InstallEventHandler(
+            target,
             { _, _, _ in
                 AppDelegate.hotkeyTriggered?()
                 return noErr
             },
-            spec.count, spec, nil, &hotKeyHandler
+            spec.count, spec, nil, &handler
         )
+        hotKeyHandler = handler
+        hkLog("installHandler status=\(status)")
     }
 
     static var hotkeyTriggered: (() -> Void)?
@@ -367,15 +386,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UnregisterEventHotKey(r)
             hotKeyRef = nil
         }
+        let key = hkKeyCode == 0 ? defaultKeyCode : hkKeyCode
         let hid = EventHotKeyID(signature: OSType(0x4144494D), id: 1) // 'ADIM'
-        RegisterEventHotKey(
-            hkKeyCode == 0 ? defaultKeyCode : hkKeyCode,
+        let status = RegisterEventHotKey(
+            key,
             hkModifiers,
             hid,
-            nil,
+            GetEventDispatcherTarget(),
             0,
             &hotKeyRef
         )
+        hkLog("register key=\(key) mods=\(hkModifiers) status=\(status) ref=\(hotKeyRef != nil ? "y" : "n")")
     }
 
     // MARK: - 快捷键录制
@@ -561,6 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 核心：勾选的 App 常驻变暗；遮罩插到该 App 窗口正上方，不遮盖其他窗口
     private func update() {
+        updateStatusIcon()
         // 收集当前运行且被勾选的 App
         let active: [NSRunningApplication]
         if masterOn {
